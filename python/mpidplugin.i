@@ -81,7 +81,7 @@ public:
     enum MultipoleAxisTypes { ZThenX = 0, Bisector = 1, ZBisect = 2, ThreeFold = 3, ZOnly = 4, NoAxisType = 5, LastAxisTypeIndex = 6 };
 
     enum CovalentType {
-                          Covalent12 = 0, Covalent13 = 1, Covalent14 = 2,
+                          Covalent12 = 0, Covalent13 = 1, Covalent14 = 2, Covalent15 = 3,
                           PolarizationCovalent11 = 4, PolarizationCovalent12 = 5, PolarizationCovalent13 = 6, PolarizationCovalent14 = 7, CovalentEnd = 8 };
 
     /**
@@ -375,20 +375,6 @@ public:
     void setMutualInducedTargetEpsilon(double inputMutualInducedTargetEpsilon);
 
     /**
-     * Set the 1-4 scale factor, which scales all (i.e.
-     * polarizable-fixed and fixed-fixed) interactions
-
-     * @param scaleFactor the factor by which 1-4 interactions are scaled
-     */
-    void set14ScaleFactor(double val);
-
-    /**
-     * Get the 1-4 scale factor, which scales all (i.e.
-     * polarizable-fixed and fixed-fixed) interactions
-     */
-    double get14ScaleFactor() const;
-
-    /**
      * Set the coefficients for the mu_0, mu_1, mu_2, ..., mu_n terms in the extrapolation
      * algorithm for induced dipoles.
      *
@@ -519,7 +505,6 @@ public:
 
 %pythoncode %{
 import simtk.openmm.app.forcefield as forcefield
-import warnings
 
 ## @private
 class MPIDGenerator(object):
@@ -530,10 +515,8 @@ class MPIDGenerator(object):
 
     #=============================================================================================
 
-    def __init__(self, forceField, scaleFactor14, defaultTholeWidth):
+    def __init__(self, forceField):
         self.forceField = forceField
-        self.scaleFactor14 = scaleFactor14
-        self.defaultTholeWidth = defaultTholeWidth
         self.typeMap = {}
 
     #=============================================================================================
@@ -602,15 +585,12 @@ class MPIDGenerator(object):
 
         existing = [f for f in forceField._forces if isinstance(f, MPIDGenerator)]
         if len(existing) == 0:
-            generator = MPIDGenerator(forceField, element.get('coulomb14scale', None), element.get('defaultTholeWidth', None))
-            forceField.registerGenerator(generator)
+            generator = MPIDGenerator(forceField)
+            #forceField.registerGenerator(generator)
+            forceField._forces.append(generator)
         else:
             # Multiple <MPIDForce> tags were found, probably in different files.  Simply add more types to the existing one.
             generator = existing[0]
-            if abs(generator.scaleFactor14 != element.get('coulomb14scale', None)):
-                raise ValueError('Found multiple MPIDForce tags with different coulomb14scale arguments')
-            if abs(generator.defaultTholeWidth != element.get('defaultTholeWidth', None)):
-                raise ValueError('Found multiple MPIDForce tags with different defaultTholeWidth arguments')
 
         # set type map: [ kIndices, multipoles, AMOEBA/OpenMM axis type]
 
@@ -747,29 +727,8 @@ class MPIDGenerator(object):
             else:
                 raise ValueError( "MPIDForce: invalide polarization type: " + polarizationType)
 
-        argval = float(args['coulomb14scale']) if 'coulomb14scale' in args else None
-        myval = float(self.scaleFactor14) if self.scaleFactor14 else None
-        if argval is not None:
-            if myval is not None:
-                if myval != argval:
-                     warnings.warn( "Conflicting coulomb14scale values found in forcefield file ({}) and createSystem args ({}).  "
-                                    "Using the value from createSystem's arguments".format(myval, argval))
-            force.set14ScaleFactor(argval)
-        else:
-            if myval is not None:
-                force.set14ScaleFactor(myval)
-
-        argval = float(args['defaultTholeWidth']) if 'defaultTholeWidth' in args else None
-        myval = float(self.defaultTholeWidth) if self.defaultTholeWidth else None
-        if argval is not None:
-            if myval is not None:
-                if myval != argval:
-                     warnings.warn( "Conflicting defaultTholeWidth values found in forcefield file ({}) and createSystem args ({}).  "
-                                    "Using the value from createSystem's arguments".format(myval, argval))
-            force.setDefaultTholeWidth(argval)
-        else:
-            if myval is not None:
-                force.setDefaultTholeWidth(myval)
+        if ('defaultTholeWidth' in args):
+            force.setDefaultTholeWidth(float(args['defaultTholeWidth']))
 
         if ('aEwald' in args):
             force.setAEwald(float(args['aEwald']))
@@ -829,6 +788,25 @@ class MPIDGenerator(object):
             bonded14Set = set(sorted(bonded14Set))
             bonded14ParticleSets.append(bonded14Set)
 
+        # 1-5
+
+        bonded15ParticleSets = []
+        for i in range(len(data.atoms)):
+            bonded15Set = set()
+            bonded14ParticleSet = bonded14ParticleSets[i]
+            for j in bonded14ParticleSet:
+                bonded15Set = bonded15Set.union(bonded12ParticleSets[j])
+
+            # remove 1-4, 1-3, 1-2 and self from set
+
+            bonded15Set = bonded15Set - bonded12ParticleSets[i]
+            bonded15Set = bonded15Set - bonded13ParticleSets[i]
+            bonded15Set = bonded15Set - bonded14ParticleSet
+            selfSet = set()
+            selfSet.add(i)
+            bonded15Set = bonded15Set - selfSet
+            bonded15Set = set(sorted(bonded15Set))
+            bonded15ParticleSets.append(bonded15Set)
 
         for (atomIndex, atom) in enumerate(data.atoms):
             t = data.atomType[atom]
@@ -1033,12 +1011,15 @@ class MPIDGenerator(object):
                         force.setCovalentMap(atomIndex, MPIDForce.Covalent12, tuple(bonded12ParticleSets[atomIndex]))
                         force.setCovalentMap(atomIndex, MPIDForce.Covalent13, tuple(bonded13ParticleSets[atomIndex]))
                         force.setCovalentMap(atomIndex, MPIDForce.Covalent14, tuple(bonded14ParticleSets[atomIndex]))
+                        force.setCovalentMap(atomIndex, MPIDForce.Covalent15, tuple(bonded15ParticleSets[atomIndex]))
                     else:
                         raise ValueError("Atom %s of %s %d is out of sync!." %(atom.name, atom.residue.name, atom.residue.index))
                 else:
                     raise ValueError("Atom %s of %s %d was not assigned." %(atom.name, atom.residue.name, atom.residue.index))
             else:
                 raise ValueError('No multipole type for atom %s %s %d' % (atom.name, atom.residue.name, atom.residue.index))
+        # debug by Kuang
+        self.force = force
 
 forcefield.parsers["MPIDForce"] = MPIDGenerator.parseElement
 %}

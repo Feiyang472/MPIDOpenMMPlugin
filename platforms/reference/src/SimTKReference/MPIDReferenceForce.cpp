@@ -3347,7 +3347,7 @@ void MPIDReferencePmeForce::performMPIDReciprocalConvolution()
         int mx = (kx < (_pmeGridDimensions[0]+1)/2) ? kx : (kx-_pmeGridDimensions[0]);
         int my = (ky < (_pmeGridDimensions[1]+1)/2) ? ky : (ky-_pmeGridDimensions[1]);
         int mz = (kz < (_pmeGridDimensions[2]+1)/2) ? kz : (kz-_pmeGridDimensions[2]);
-
+        
         double mhx = mx*_recipBoxVectors[0][0];
         double mhy = mx*_recipBoxVectors[1][0]+my*_recipBoxVectors[1][1];
         double mhz = mx*_recipBoxVectors[2][0]+my*_recipBoxVectors[2][1]+mz*_recipBoxVectors[2][2];
@@ -3860,8 +3860,12 @@ double MPIDReferencePmeForce::computeReciprocalSpaceFixedMultipoleForceAndEnergy
         forces[i]      -= Vec3(f[0]*fracToCart[0][0] + f[1]*fracToCart[0][1] + f[2]*fracToCart[0][2],
                                f[0]*fracToCart[1][0] + f[1]*fracToCart[1][1] + f[2]*fracToCart[1][2],
                                f[0]*fracToCart[2][0] + f[1]*fracToCart[2][1] + f[2]*fracToCart[2][2]);
-
+        std::cout << "Forces: " << Vec3(f[0]*fracToCart[0][0] + f[1]*fracToCart[0][1] + f[2]*fracToCart[0][2],
+                                        f[0]*fracToCart[1][0] + f[1]*fracToCart[1][1] + f[2]*fracToCart[1][2],
+                                        f[0]*fracToCart[2][0] + f[1]*fracToCart[2][1] + f[2]*fracToCart[2][2]) * _electric << " " <<
+        endl <<flush;
     }
+    std::cout << "Energy: " << (0.5*_electric*energy) << endl << flush;
     return (0.5*_electric*energy);
 }
 
@@ -4945,11 +4949,25 @@ double MPIDReferencePmeForce::calculateElectrostatic(const vector<MultipoleParti
         }
     }
 
+    // debug
+    double ene_real = energy;
     // The polarization energy
     calculatePmeSelfTorque(particleData, torques);
-    energy += computeReciprocalSpaceInducedDipoleForceAndEnergy(getPolarizationType(), particleData, forces, torques);
-    energy += computeReciprocalSpaceFixedMultipoleForceAndEnergy(particleData, forces, torques);
-    energy += calculatePmeSelfEnergy(particleData);
+    double ene_induced_recip = computeReciprocalSpaceInducedDipoleForceAndEnergy(getPolarizationType(), particleData, forces, torques);
+    energy += ene_induced_recip;
+    double ene_fixed_recip = computeReciprocalSpaceFixedMultipoleForceAndEnergy(particleData, forces, torques);
+    energy += ene_fixed_recip;
+    double ene_self = calculatePmeSelfEnergy(particleData);
+    energy += ene_self;
+    std::cout << "-----------------------------------" << endl;
+    std::cout << "kappa (A^-1):      " << _alphaEwald/10 << endl;
+    std::cout << "pmeGridDimensions: " << _pmeGridDimensions[0] << endl;
+    std::cout << "ene_real:          " << ene_real << endl;
+    std::cout << "ene_induced_recip: " << ene_induced_recip << endl;
+    std::cout << "ene_fixed_recip:   " << ene_fixed_recip << endl;
+    std::cout << "ene_self:          " << ene_self << endl;
+    std::cout << "ene_tot:           " << energy << endl ;
+
 
     // Now that both the direct and reciprocal space contributions have been added, we can compute the dipole
     // response contributions to the forces, if we're using the extrapolated polarization algorithm.
